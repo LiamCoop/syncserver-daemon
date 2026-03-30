@@ -1,0 +1,16 @@
+[package]
+name = "fs-automerge-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.6.0", features = ["derive"] }
+ctrlc = "3.0"
+automerge = "0.5"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+ciborium = "0.2"              # CBOR encoding (what automerge-repo uses)
+uuid = { version = "1", features = ["v4"] }  # for generating a peer ID
+futures-util = "0.3"
+
+
