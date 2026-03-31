@@ -18,7 +18,6 @@ pub async fn send_join(
         ),
     ]);
     let mut bytes = Vec::new();
-    // do I need to match / error handle this?
     let _ = into_writer(&map, &mut bytes);
 
     let msg = Message::Binary(bytes);
