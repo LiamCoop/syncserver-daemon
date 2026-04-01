@@ -12,5 +12,6 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 ciborium = "0.2"              # CBOR encoding (what automerge-repo uses)
 uuid = { version = "1", features = ["v4"] }  # for generating a peer ID
 futures-util = "0.3"
+serde = { version = "1.0.228", features = ["derive"] }
 
 

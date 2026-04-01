@@ -396,6 +396,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "futures-util",
+ "serde",
  "tokio",
  "tokio-tungstenite",
  "uuid",

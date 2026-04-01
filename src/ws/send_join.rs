@@ -1,33 +1,46 @@
-use ciborium::{into_writer, Value};
-use futures_util::{stream::SplitSink, SinkExt};
+use ciborium::Value;
+use futures_util::stream::SplitSink;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
+use crate::ws::send_receive::send;
+
 pub async fn send_join(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    peer_id: &str,
+    target_id: &str,
+    storage_id: &str,
+    is_ephemeral: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let map = Value::Map(vec![
         (
             Value::Text("senderId".to_string()),
-            Value::Text(peer_id.to_string()),
+            Value::Text(target_id.to_string()),
         ),
         (
             Value::Text("supportedProtocolVersions".to_string()),
             Value::Array(vec![Value::Text("1".to_string())]),
         ),
+        (
+            Value::Text("metadata".to_string()),
+            Value::Map(vec![
+                (
+                    Value::Text("storageId".to_string()),
+                    Value::Text(storage_id.to_string()),
+                ),
+                (
+                    Value::Text("isEphemeral".to_string()),
+                    Value::Bool(is_ephemeral),
+                ),
+            ]),
+        ),
     ]);
-    let mut bytes = Vec::new();
-    let _ = into_writer(&map, &mut bytes);
-
-    let msg = Message::Binary(bytes);
-    sender.send(msg).await?;
+    let _ = send(sender, map).await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ws::ws_conn_open::open_ws_conn;
+    use crate::ws::conn_open::open_ws_conn;
 
     use super::*;
     use futures_util::StreamExt;
@@ -56,7 +69,7 @@ mod tests {
         let (url, server) = setup_mock_server().await;
         let (mut sender, _receiver) = open_ws_conn(&url).await.unwrap();
 
-        let result = send_join(&mut sender, "test-peer-id").await;
+        let result = send_join(&mut sender, "test-peer-id", "storage-id", false).await;
         assert!(result.is_ok(), "send_join should succeed");
 
         // Await the server handle to confirm it received something
@@ -69,7 +82,9 @@ mod tests {
         let (url, server) = setup_mock_server().await;
         let (mut sender, _receiver) = open_ws_conn(&url).await.unwrap();
 
-        send_join(&mut sender, "test-peer-id").await.unwrap();
+        send_join(&mut sender, "test-peer-id", "storage-id", false)
+            .await
+            .unwrap();
 
         let received = server.await.unwrap().unwrap();
         // The automerge-repo protocol uses binary WebSocket frames for CBOR
@@ -82,7 +97,9 @@ mod tests {
         let (mut sender, _receiver) = open_ws_conn(&url).await.unwrap();
 
         let peer_id = "my-test-peer-id";
-        send_join(&mut sender, peer_id).await.unwrap();
+        send_join(&mut sender, peer_id, "storage-id", false)
+            .await
+            .unwrap();
 
         let received = server.await.unwrap().unwrap();
         let bytes = received.into_data();
@@ -117,7 +134,9 @@ mod tests {
         let (url, server) = setup_mock_server().await;
         let (mut sender, _receiver) = open_ws_conn(&url).await.unwrap();
 
-        send_join(&mut sender, "test-peer-id").await.unwrap();
+        send_join(&mut sender, "test-peer-id", "storage-id", false)
+            .await
+            .unwrap();
 
         let received = server.await.unwrap().unwrap();
         let bytes = received.into_data();

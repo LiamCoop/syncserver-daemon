@@ -1,46 +1,12 @@
-use ciborium::{from_reader, Value};
-use futures_util::{stream::SplitStream, StreamExt};
+use futures_util::stream::SplitStream;
 use tokio::net::TcpStream;
-use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-pub async fn receive_peer(
-    receiver: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let message = receiver.next().await.unwrap()?;
-    match message {
-        Message::Binary(bytes) => {
-            // check for type "peer"
-            let reader_value: Value = from_reader(bytes.as_slice())?;
-            let map = reader_value.into_map().unwrap();
-            let (_, type_value) = map
-                .iter()
-                .find(|(k, _)| k == &ciborium::value::Value::Text("type".to_string()))
-                .unwrap();
-
-            if type_value != &ciborium::value::Value::Text("peer".to_string()) {
-                return Err(Box::from("unexpected message type"));
-            }
-
-            let (_, peer_id_value) = map
-                .iter()
-                .find(|(k, _)| k == &ciborium::value::Value::Text("peerId".to_string()))
-                .unwrap();
-
-            let peer_id_result = peer_id_value.clone().into_text();
-            let peer_id = match peer_id_result {
-                Ok(id) => id,
-                Err(_) => return Err(Box::from("")),
-            };
-
-            Ok(peer_id)
-        }
-        _ => Err(Box::from("unexpected message type")),
-    }
-}
+use crate::ws::send_receive::receive;
 
 #[cfg(test)]
 mod tests {
-    use crate::ws::ws_conn_open::open_ws_conn;
+    use crate::ws::conn_open::open_ws_conn;
 
     use super::*;
     use ciborium::{into_writer, Value};
