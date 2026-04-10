@@ -7,8 +7,6 @@ use automerge::AutoCommit;
 use clap::Parser;
 
 use crate::ws::conn_open::open_ws_conn;
-use crate::ws::receive_peer::receive_peer;
-use crate::ws::send_join::send_join;
 
 mod ws;
 
@@ -27,12 +25,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sync_server_url = std::env::var("SYNC_SERVER_URL")?;
     // environment variable for sync server
-    let (mut sender, mut receiver) = open_ws_conn(&sync_server_url).await.unwrap();
+    let (_sender, mut _receiver) = open_ws_conn(&sync_server_url).await.unwrap();
 
-    let sender_id = uuid::Uuid::new_v4().to_string();
-    let _ = send_join(&mut sender, &sender_id).await?;
-
-    let _peer_id = receive_peer(&mut receiver).await?;
+    let _sender_id = uuid::Uuid::new_v4().to_string();
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();

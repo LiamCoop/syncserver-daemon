@@ -1,13 +1,4 @@
 pub mod conn_open;
 pub mod messages;
-pub mod receive_peer;
-pub mod send_ephemeral;
-pub mod send_error;
-pub mod send_join;
-pub mod send_leave;
-pub mod send_peer;
+pub mod send;
 pub mod send_receive;
-pub mod send_remote_subscription_changed;
-pub mod send_request;
-pub mod send_sync;
-pub mod send_unavailable;

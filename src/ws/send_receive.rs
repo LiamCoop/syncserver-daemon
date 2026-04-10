@@ -1,12 +1,14 @@
-use ciborium::{from_reader, into_writer, Value};
+use ciborium::{from_reader, into_writer};
 use futures_util::{stream::SplitSink, SinkExt};
 use futures_util::{stream::SplitStream, StreamExt};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-pub async fn send(
+pub async fn send<T: Serialize>(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    map: Value,
+    map: T,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     let _ = into_writer(&map, &mut bytes);
@@ -16,13 +18,13 @@ pub async fn send(
     Ok(())
 }
 
-pub async fn receive(
+pub async fn receive<T: DeserializeOwned>(
     receiver: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-) -> Result<Value, Box<dyn std::error::Error>> {
+) -> Result<T, Box<dyn std::error::Error>> {
     let message = receiver.next().await.unwrap()?;
     match message {
         Message::Binary(bytes) => {
-            let result: Value = from_reader(bytes.as_slice())?;
+            let result: T = from_reader(bytes.as_slice())?;
             Ok(result)
         }
         _ => Err(Box::from("unexpected message type")),
