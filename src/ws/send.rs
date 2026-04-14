@@ -43,12 +43,12 @@ pub async fn send_error(
 pub async fn send_join(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     sender_id: String,
-    selected_protocol_versions: Vec<String>,
+    supported_protocol_version: Vec<String>,
     metadata: PeerMetadata,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let map = WSMessage::Join {
         sender_id,
-        selected_protocol_versions,
+        supported_protocol_version,
         metadata,
     };
     let _ = send(sender, map).await?;
@@ -68,13 +68,13 @@ pub async fn send_peer(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     sender_id: String,
     target_id: String,
-    selected_protocol_versions: Vec<String>,
+    selected_protocol_version: Vec<String>,
     metadata: PeerMetadata,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let map = WSMessage::Peer {
         sender_id,
         target_id,
-        selected_protocol_versions,
+        selected_protocol_version,
         metadata,
     };
     let _ = send(sender, map).await?;
