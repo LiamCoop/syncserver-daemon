@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerMetadata {
-    storage_id: String,
-    is_ephemeral: bool,
+    pub storage_id: String,
+    pub is_ephemeral: bool,
 }
 
 #[derive(Serialize, Deserialize)]
