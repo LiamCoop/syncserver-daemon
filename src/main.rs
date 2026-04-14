@@ -1,11 +1,12 @@
-use automerge::sync::SyncDoc;
+use automerge::sync::{Message, SyncDoc};
 use automerge::AutoCommit;
 use clap::Parser;
 use futures_util::stream::{SplitSink, SplitStream};
+use log::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::ws::conn_open::open_ws_conn;
@@ -26,6 +27,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args = Cli::parse();
 
     let sync_server_url = args.automerge_url;
@@ -80,7 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data,
                 metadata,
             } => todo!(),
-            WSMessage::Error { message } => todo!(),
+            WSMessage::Error { message } => {
+                log::error!("error received from sync server: {}", message)
+            }
             WSMessage::Join {
                 sender_id,
                 supported_protocol_version,
@@ -94,16 +98,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data,
             } => todo!(),
             WSMessage::Sync {
-                sender_id,
-                target_id,
-                document_id,
+                sender_id: _,
+                target_id: _,
+                // do I have to specify which document is getting it applied to them?
+                // maybe I should be maintaining a map of documents so this CLI can handle multiple
+                // somehow?
+                document_id: _,
                 data,
-            } => todo!(),
+            } => {
+                let message = Message::decode(&data).unwrap();
+                if let Err(e) = doc.sync().receive_sync_message(&mut sync_state, message) {
+                    log::error!("failed to apply sync message: {}", e);
+                    continue;
+                }
+            }
             WSMessage::Unavailable {
                 sender_id,
-                target_id,
-                document_id,
-            } => todo!(),
+                target_id: _,
+                document_id: _,
+            } => log::info!("got unavailable from {}", sender_id),
             WSMessage::RemoteSubscriptionChange {
                 sender_id,
                 target_id,
@@ -129,7 +142,7 @@ fn parse_doc_id(url: &str) -> Result<&str, Box<dyn std::error::Error>> {
 }
 
 async fn handshake(
-    sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+    sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, TungsteniteMessage>,
     receiver: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     sender_id: String,
 ) -> Result<String, Box<dyn std::error::Error>> {
