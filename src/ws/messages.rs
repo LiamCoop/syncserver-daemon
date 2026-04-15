@@ -25,8 +25,8 @@ pub enum WSMessage {
     Peer {
         sender_id: String,
         target_id: String,
-        selected_protocol_version: Vec<String>,
-        metadata: PeerMetadata,
+        selected_protocol_version: String,
+        metadata: Option<PeerMetadata>,
     },
     #[serde(rename_all = "camelCase")]
     Ephemeral {
@@ -37,15 +37,15 @@ pub enum WSMessage {
         document_id: String,
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
-        metadata: PeerMetadata,
+        metadata: Option<PeerMetadata>,
     },
     #[serde(rename_all = "camelCase")]
     Error { message: String },
     #[serde(rename_all = "camelCase")]
     Join {
         sender_id: String,
-        supported_protocol_version: Vec<String>,
-        metadata: PeerMetadata,
+        supported_protocol_version: String,
+        metadata: Option<PeerMetadata>,
     },
     #[serde(rename_all = "camelCase")]
     Leave { sender_id: String },
@@ -139,11 +139,11 @@ mod tests {
         fn type_field_is_correct() {
             let msg = WSMessage::Join {
                 sender_id: "sender".to_string(),
-                supported_protocol_version: vec!["1".to_string()],
-                metadata: PeerMetadata {
+                supported_protocol_version: "1".to_string(),
+                metadata: Some(PeerMetadata {
                     storage_id: "storage-id".to_string(),
                     is_ephemeral: true,
-                },
+                }),
             };
             let v = get_type_value(msg);
             assert_eq!(v, "join");
@@ -153,11 +153,11 @@ mod tests {
         fn field_names_camelcase() {
             let msg = WSMessage::Join {
                 sender_id: "sender".to_string(),
-                supported_protocol_version: vec!["1".to_string()],
-                metadata: PeerMetadata {
+                supported_protocol_version: "1".to_string(),
+                metadata: Some(PeerMetadata {
                     storage_id: "storage-id".to_string(),
                     is_ephemeral: true,
-                },
+                }),
             };
             let keys = get_keys(msg);
             assert!(keys.contains(&"senderId".to_string()));
@@ -176,11 +176,11 @@ mod tests {
             let msg = WSMessage::Peer {
                 sender_id: "sender".to_string(),
                 target_id: "receiver".to_string(),
-                selected_protocol_version: vec!["1".to_string()],
-                metadata: PeerMetadata {
+                selected_protocol_version: "1".to_string(),
+                metadata: Some(PeerMetadata {
                     storage_id: "storage-id".to_string(),
                     is_ephemeral: true,
-                },
+                }),
             };
             let v = get_type_value(msg);
             assert_eq!(v, "peer");
@@ -191,11 +191,11 @@ mod tests {
             let msg = WSMessage::Peer {
                 sender_id: "sender".to_string(),
                 target_id: "receiver".to_string(),
-                selected_protocol_version: vec!["1".to_string()],
-                metadata: PeerMetadata {
+                selected_protocol_version: "1".to_string(),
+                metadata: Some(PeerMetadata {
                     storage_id: "storage-id".to_string(),
                     is_ephemeral: true,
-                },
+                }),
             };
             let keys = get_keys(msg);
             assert!(keys.contains(&"senderId".to_string()));
@@ -362,10 +362,10 @@ mod tests {
                 session_id: "session".to_string(),
                 document_id: "document".to_string(),
                 data: vec![0, 1, 2],
-                metadata: PeerMetadata {
+                metadata: Some(PeerMetadata {
                     storage_id: "storage-id".to_string(),
                     is_ephemeral: true,
-                },
+                }),
             };
             let v = get_type_value(msg);
             assert_eq!(v, "ephemeral");
@@ -380,10 +380,10 @@ mod tests {
                 session_id: "session".to_string(),
                 document_id: "document".to_string(),
                 data: vec![0, 1, 2],
-                metadata: PeerMetadata {
+                metadata: Some(PeerMetadata {
                     storage_id: "storage-id".to_string(),
                     is_ephemeral: true,
-                },
+                }),
             };
             let keys = get_keys(msg);
             assert!(keys.contains(&"type".to_string()));

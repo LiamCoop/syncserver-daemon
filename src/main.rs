@@ -1,8 +1,8 @@
 use automerge::sync::{Message, SyncDoc};
-use automerge::AutoCommit;
+use automerge::{AutoCommit, ReadDoc};
 use clap::Parser;
 use futures_util::stream::{SplitSink, SplitStream};
-use log::info;
+use futures_util::SinkExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -11,7 +11,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::ws::conn_open::open_ws_conn;
 use crate::ws::messages::{PeerMetadata, WSMessage};
-use crate::ws::send::send_join;
+use crate::ws::send::{send_error, send_join, send_request, send_sync};
 use crate::ws::send_receive::receive;
 
 mod ws;
@@ -41,17 +41,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let r = running.clone();
 
     // Parse the document ID out of your doc_url
-    let _doc_id = parse_doc_id(&args.doc_url)?;
+    let doc_id = parse_doc_id(&args.doc_url)?;
     // Generate an initial sync message from your empty doc
     let mut doc = AutoCommit::new();
 
     let mut sync_state = automerge::sync::State::new();
-    let _m = doc
+    let m = doc
         .sync()
         .generate_sync_message(&mut sync_state)
         .ok_or("failed to generate sync message")?;
 
-    let _receiver_id = handshake(&mut sender, &mut receiver, sender_id).await;
+    // if the handshake fails we terminate
+    let receiver_id = handshake(&mut sender, &mut receiver, sender_id.clone()).await?;
+
+    let _ = send_request(
+        &mut sender,
+        sender_id.clone(),
+        receiver_id,
+        doc_id.to_string(),
+        m,
+    )
+    .await;
 
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
@@ -59,50 +69,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .expect("Error setting Ctrl-C handler");
 
     while running.load(Ordering::SeqCst) {
-        /*
-        receive sync messages
-            → apply to AutoCommit doc
-                → extract doc.content as String
-                    → write to file
-        */
-
-        match receive(&mut receiver).await? {
+        match receive(&mut sender, &mut receiver).await? {
             WSMessage::Peer {
                 sender_id,
-                target_id,
-                selected_protocol_version,
-                metadata,
-            } => todo!(),
+                target_id: _,
+                selected_protocol_version: _,
+                metadata: _,
+            } => log::error!("received peer with sender id: {}", sender_id),
             WSMessage::Ephemeral {
                 sender_id,
-                target_id,
-                count,
-                session_id,
-                document_id,
-                data,
-                metadata,
-            } => todo!(),
+                target_id: _,
+                count: _,
+                session_id: _,
+                document_id: _,
+                data: _,
+                metadata: _,
+            } => log::info!("received ephemeral with sender id: {}", sender_id),
             WSMessage::Error { message } => {
                 log::error!("error received from sync server: {}", message)
             }
             WSMessage::Join {
                 sender_id,
-                supported_protocol_version,
-                metadata,
-            } => todo!(),
-            WSMessage::Leave { sender_id } => todo!(),
+                supported_protocol_version: _,
+                metadata: _,
+            } => log::info!("id: {} has joined", sender_id),
+            WSMessage::Leave { sender_id } => log::info!("id: {} has left", sender_id),
             WSMessage::Request {
                 sender_id,
-                target_id,
-                document_id,
-                data,
-            } => todo!(),
-            WSMessage::Sync {
-                sender_id: _,
                 target_id: _,
-                // do I have to specify which document is getting it applied to them?
-                // maybe I should be maintaining a map of documents so this CLI can handle multiple
-                // somehow?
+                document_id: _,
+                data: _,
+            } => log::info!("received request with sender id: {}", sender_id),
+            WSMessage::Sync {
+                sender_id: sync_sender_id,
+                target_id: _,
                 document_id: _,
                 data,
             } => {
@@ -110,6 +110,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(e) = doc.sync().receive_sync_message(&mut sync_state, message) {
                     log::error!("failed to apply sync message: {}", e);
                     continue;
+                }
+                let option = doc.sync().generate_sync_message(&mut sync_state);
+                match option {
+                    Some(msg) => {
+                        if let Err(e) = send_sync(
+                            &mut sender,
+                            sender_id.clone(),
+                            sync_sender_id,
+                            doc_id.to_string(),
+                            msg,
+                        )
+                        .await
+                        {
+                            return Err(e);
+                        };
+                    }
+                    // we're done collecting information from a faraway land
+                    None => {
+                        log::info!("write doc!");
+                        let option = doc.get(automerge::ROOT, "content").unwrap();
+                        match option {
+                            Some((_, obj_id)) => {
+                                let doc_content = doc.text(obj_id)?;
+                                std::fs::write(args.path.clone(), doc_content)?;
+                            }
+                            None => todo!(),
+                        }
+                    }
                 }
             }
             WSMessage::Unavailable {
@@ -119,16 +147,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => log::info!("got unavailable from {}", sender_id),
             WSMessage::RemoteSubscriptionChange {
                 sender_id,
-                target_id,
-                add,
-                remove,
-            } => todo!(),
+                target_id: _,
+                add: _,
+                remove: _,
+            } => log::info!(
+                "received remote subscription change with sender id: {}",
+                sender_id
+            ),
             WSMessage::RemoteHeadsChanged {
                 sender_id,
-                target_id,
-                document_id,
-                new_heads,
-            } => todo!(),
+                target_id: _,
+                document_id: _,
+                new_heads: _,
+            } => log::info!(
+                "received remote heads changed with sender id: {}",
+                sender_id
+            ),
         }
     }
 
@@ -141,6 +175,7 @@ fn parse_doc_id(url: &str) -> Result<&str, Box<dyn std::error::Error>> {
     Ok(right)
 }
 
+// we may not get a peer message back, in that case an error is returned
 async fn handshake(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, TungsteniteMessage>,
     receiver: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
@@ -149,77 +184,43 @@ async fn handshake(
     let _ = send_join(
         sender,
         sender_id,
-        vec!["1".to_string()],
-        PeerMetadata {
-            storage_id: "".to_string(),
+        "1".to_string(),
+        Some(PeerMetadata {
+            storage_id: "test".to_string(),
             is_ephemeral: true,
-        },
+        }),
     )
     .await?;
 
-    match receive(receiver).await? {
+    match receive(sender, receiver).await? {
         WSMessage::Peer {
             sender_id,
             target_id: _,
-            selected_protocol_version: _,
+            selected_protocol_version,
             metadata: _,
-        } => Ok(sender_id),
-        _ => Err(Box::from("expected Peer message during handshake")),
-    }
-}
-
-async fn receive_message(message: WSMessage) -> Result<(), Box<dyn std::error::Error>> {
-    match message {
-        WSMessage::Peer {
-            sender_id: _,
-            target_id: _,
-            selected_protocol_version: _,
-            metadata: _,
-        } => todo!(),
-        WSMessage::Ephemeral {
-            sender_id: _,
-            target_id: _,
-            count: _,
-            session_id: _,
-            document_id: _,
-            data: _,
-            metadata: _,
-        } => todo!(),
-        WSMessage::Error { message: _ } => todo!(),
-        WSMessage::Join {
-            sender_id: _,
-            supported_protocol_version: _,
-            metadata: _,
-        } => todo!(),
-        WSMessage::Leave { sender_id: _ } => todo!(),
-        WSMessage::Request {
-            sender_id: _,
-            target_id: _,
-            document_id: _,
-            data: _,
-        } => todo!(),
-        WSMessage::Sync {
-            sender_id: _,
-            target_id: _,
-            document_id: _,
-            data: _,
-        } => todo!(),
-        WSMessage::Unavailable {
-            sender_id: _,
-            target_id: _,
-            document_id: _,
-        } => todo!(),
-        WSMessage::RemoteSubscriptionChange {
-            sender_id: _,
-            target_id: _,
-            add: _,
-            remove: _,
-        } => todo!(),
-        WSMessage::RemoteHeadsChanged {
-            sender_id: _,
-            target_id: _,
-            document_id: _,
-            new_heads: _,
-        } => todo!(),
+        } => {
+            if selected_protocol_version != "1" {
+                // WS should send Error
+                let _ = send_error(sender, "selected protocol version was not 1".to_string()).await;
+                // send web socket close
+                let _ = sender.send(TungsteniteMessage::Close(None));
+                return Err(Box::from(format!(
+                    "handshake failed: selected_protocol_version expected 1, got {:?}",
+                    selected_protocol_version
+                )));
+            }
+            Ok(sender_id)
+        }
+        _ => {
+            // WS should send Error
+            let _ = send_error(sender, "received something other than peer".to_string()).await;
+            // send web socket close
+            let _ = sender.send(TungsteniteMessage::Close(None));
+            // TODO: drain messages
+            // return error
+            Err(Box::from(
+                "handshake failed: client (us) sent error message",
+            ))
+        }
     }
 }

@@ -20,14 +20,19 @@ pub async fn send<T: Serialize>(
 }
 
 pub async fn receive(
+    sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     receiver: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 ) -> Result<WSMessage, Box<dyn std::error::Error>> {
-    let message = receiver.next().await.unwrap()?;
-    match message {
-        Message::Binary(bytes) => {
-            let result: WSMessage = from_reader(bytes.as_slice())?;
-            Ok(result)
+    loop {
+        match receiver.next().await.unwrap()? {
+            Message::Binary(bytes) => {
+                let result: WSMessage = from_reader(bytes.as_slice())?;
+                return Ok(result);
+            }
+            Message::Ping(bytes) => {
+                sender.send(Message::Pong(bytes)).await?;
+            }
+            msg => return Err(Box::from(format!("unexpected message type: {:?}", msg))),
         }
-        _ => Err(Box::from("unexpected message type")),
     }
 }

@@ -16,7 +16,7 @@ pub async fn send_ephemeral(
     count: u32,
     session_id: String,
     data: Vec<u8>,
-    metadata: PeerMetadata,
+    metadata: Option<PeerMetadata>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let map = WSMessage::Ephemeral {
         sender_id,
@@ -43,8 +43,8 @@ pub async fn send_error(
 pub async fn send_join(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     sender_id: String,
-    supported_protocol_version: Vec<String>,
-    metadata: PeerMetadata,
+    supported_protocol_version: String,
+    metadata: Option<PeerMetadata>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let map = WSMessage::Join {
         sender_id,
@@ -68,8 +68,8 @@ pub async fn send_peer(
     sender: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     sender_id: String,
     target_id: String,
-    selected_protocol_version: Vec<String>,
-    metadata: PeerMetadata,
+    selected_protocol_version: String,
+    metadata: Option<PeerMetadata>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let map = WSMessage::Peer {
         sender_id,
