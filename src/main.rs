@@ -1,11 +1,16 @@
-use automerge::sync::{Message, SyncDoc};
-use automerge::{AutoCommit, ReadDoc};
+use automerge::sync::Message;
+use automerge::sync::SyncDoc;
+use automerge::AutoCommit;
+use automerge::ReadDoc;
 use clap::Parser;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
+use notify::{self, Config, RecommendedWatcher, Watcher};
+use similar::{DiffOp, TextDiff};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::channel;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -29,6 +34,17 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let args = Cli::parse();
+
+    // start file watching the local file, default number of buffered events: 32
+    let (tx, mut rx) = channel(32);
+    let mut watcher = RecommendedWatcher::new(
+        move |res| {
+            tx.blocking_send(res).unwrap();
+        },
+        Config::default(),
+    )?;
+
+    watcher.watch(&args.path.clone(), notify::RecursiveMode::Recursive)?;
 
     let sync_server_url = args.automerge_url;
 
@@ -69,100 +85,123 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .expect("Error setting Ctrl-C handler");
 
     while running.load(Ordering::SeqCst) {
-        match receive(&mut sender, &mut receiver).await? {
-            WSMessage::Peer {
-                sender_id,
-                target_id: _,
-                selected_protocol_version: _,
-                metadata: _,
-            } => log::error!("received peer with sender id: {}", sender_id),
-            WSMessage::Ephemeral {
-                sender_id,
-                target_id: _,
-                count: _,
-                session_id: _,
-                document_id: _,
-                data: _,
-                metadata: _,
-            } => log::info!("received ephemeral with sender id: {}", sender_id),
-            WSMessage::Error { message } => {
-                log::error!("error received from sync server: {}", message)
-            }
-            WSMessage::Join {
-                sender_id,
-                supported_protocol_version: _,
-                metadata: _,
-            } => log::info!("id: {} has joined", sender_id),
-            WSMessage::Leave { sender_id } => log::info!("id: {} has left", sender_id),
-            WSMessage::Request {
-                sender_id,
-                target_id: _,
-                document_id: _,
-                data: _,
-            } => log::info!("received request with sender id: {}", sender_id),
-            WSMessage::Sync {
-                sender_id: sync_sender_id,
-                target_id: _,
-                document_id: _,
-                data,
-            } => {
-                let message = Message::decode(&data).unwrap();
-                if let Err(e) = doc.sync().receive_sync_message(&mut sync_state, message) {
-                    log::error!("failed to apply sync message: {}", e);
-                    continue;
-                }
-                let option = doc.sync().generate_sync_message(&mut sync_state);
-                match option {
-                    Some(msg) => {
-                        if let Err(e) = send_sync(
-                            &mut sender,
-                            sender_id.clone(),
-                            sync_sender_id,
-                            doc_id.to_string(),
-                            msg,
-                        )
-                        .await
-                        {
-                            return Err(e);
-                        };
+        tokio::select! {
+            msg = receive(&mut sender, &mut receiver) => {
+                    match msg? {
+                    WSMessage::Peer {
+                        sender_id,
+                        target_id: _,
+                        selected_protocol_version: _,
+                        metadata: _,
+                    } => log::error!("received peer with sender id: {}", sender_id),
+                    WSMessage::Ephemeral {
+                        sender_id,
+                        target_id: _,
+                        count: _,
+                        session_id: _,
+                        document_id: _,
+                        data: _,
+                        metadata: _,
+                    } => log::info!("received ephemeral with sender id: {}", sender_id),
+                    WSMessage::Error { message } => {
+                        log::error!("error received from sync server: {}", message)
                     }
-                    // we're done collecting information from a faraway land
-                    None => {
-                        log::info!("write doc!");
-                        let option = doc.get(automerge::ROOT, "content").unwrap();
+                    WSMessage::Join {
+                        sender_id,
+                        supported_protocol_version: _,
+                        metadata: _,
+                    } => log::info!("id: {} has joined", sender_id),
+                    WSMessage::Leave { sender_id } => log::info!("id: {} has left", sender_id),
+                    WSMessage::Request {
+                        sender_id,
+                        target_id: _,
+                        document_id: _,
+                        data: _,
+                    } => log::info!("received request with sender id: {}", sender_id),
+                    WSMessage::Sync {
+                        sender_id: sync_sender_id,
+                        target_id: _,
+                        document_id: _,
+                        data,
+                    } => {
+                        let message = Message::decode(&data).unwrap();
+                        if let Err(e) = doc.sync().receive_sync_message(&mut sync_state, message) {
+                            log::error!("failed to apply sync message: {}", e);
+                            continue;
+                        }
+                        let option = doc.sync().generate_sync_message(&mut sync_state);
                         match option {
-                            Some((_, obj_id)) => {
-                                let doc_content = doc.text(obj_id)?;
-                                std::fs::write(args.path.clone(), doc_content)?;
+                            Some(msg) => {
+                                if let Err(e) = send_sync(
+                                    &mut sender,
+                                    sender_id.clone(),
+                                    sync_sender_id,
+                                    doc_id.to_string(),
+                                    msg,
+                                )
+                                .await
+                                {
+                                    return Err(e);
+                                };
                             }
-                            None => todo!(),
+                            // we're done collecting information from a faraway land
+                            None => {
+                                let option = doc.get(automerge::ROOT, "content").unwrap();
+                                match option {
+                                    Some((_, obj_id)) => {
+                                        let doc_content = doc.text(obj_id)?;
+                                        log::info!("writing {} chars: {:?}", doc_content.len(), &doc_content[..50.min(doc_content.len())]);
+                                        std::fs::write(args.path.clone(), doc_content)?;
+                                    }
+                                    None => todo!(),
+                                }
+                            }
                         }
                     }
+                    WSMessage::Unavailable {
+                        sender_id,
+                        target_id: _,
+                        document_id: _,
+                    } => log::info!("got unavailable from {}", sender_id),
+                    WSMessage::RemoteSubscriptionChange {
+                        sender_id,
+                        target_id: _,
+                        add: _,
+                        remove: _,
+                    } => log::info!(
+                        "received remote subscription change with sender id: {}",
+                        sender_id
+                    ),
+                    WSMessage::RemoteHeadsChanged {
+                        sender_id,
+                        target_id: _,
+                        document_id: _,
+                        new_heads: _,
+                    } => log::info!(
+                        "received remote heads changed with sender id: {}",
+                        sender_id
+                    ),
                 }
             }
-            WSMessage::Unavailable {
-                sender_id,
-                target_id: _,
-                document_id: _,
-            } => log::info!("got unavailable from {}", sender_id),
-            WSMessage::RemoteSubscriptionChange {
-                sender_id,
-                target_id: _,
-                add: _,
-                remove: _,
-            } => log::info!(
-                "received remote subscription change with sender id: {}",
-                sender_id
-            ),
-            WSMessage::RemoteHeadsChanged {
-                sender_id,
-                target_id: _,
-                document_id: _,
-                new_heads: _,
-            } => log::info!(
-                "received remote heads changed with sender id: {}",
-                sender_id
-            ),
+            event = rx.recv() => {
+                // log::info!("file changed: {:?}", event);
+                let file = std::fs::read(args.path.clone())?;
+                let file_content = String::from_utf8(file)?;
+                let option = doc.get(automerge::ROOT, "content").unwrap();
+                match option {
+                    Some((_, obj_id)) => {
+                        let doc_content = doc.text(obj_id)?;
+                        let diff = TextDiff::from_chars(&doc_content, &file_content);
+                        for op in diff.ops() {
+                            match op {
+                                DiffOp::Equal => todo!(),
+
+                            }
+                        }
+                    }
+                    None => todo!(),
+                }
+            }
         }
     }
 

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use automerge::sync;
 use futures_util::stream::SplitSink;
 use tokio::net::TcpStream;
