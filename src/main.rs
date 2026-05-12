@@ -1,5 +1,6 @@
 use automerge::sync::Message;
 use automerge::sync::SyncDoc;
+use automerge::transaction::Transactable;
 use automerge::AutoCommit;
 use automerge::ReadDoc;
 use clap::Parser;
@@ -73,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = send_request(
         &mut sender,
         sender_id.clone(),
-        receiver_id,
+        receiver_id.clone(),
         doc_id.to_string(),
         m,
     )
@@ -183,24 +184,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ),
                 }
             }
-            event = rx.recv() => {
+            _event = rx.recv() => {
                 // log::info!("file changed: {:?}", event);
                 let file = std::fs::read(args.path.clone())?;
                 let file_content = String::from_utf8(file)?;
                 let option = doc.get(automerge::ROOT, "content").unwrap();
                 match option {
                     Some((_, obj_id)) => {
-                        let doc_content = doc.text(obj_id)?;
+                        let doc_content = doc.text(&obj_id)?;
                         let diff = TextDiff::from_chars(&doc_content, &file_content);
-                        for op in diff.ops() {
+                        // start at the end so we don't need to keep track of indices as they change
+                        for op in diff.ops().iter().rev() {
                             match op {
-                                DiffOp::Equal => todo!(),
+                                DiffOp::Equal{ old_index: _old_index, new_index: _new_index, len: _len } => {},
+                                DiffOp::Delete{ old_index, old_len, new_index: _ } => {
+                                    doc.splice_text(&obj_id, *old_index, *old_len as isize, "")?;
 
+                                }
+                                DiffOp::Insert{ old_index, new_index, new_len } => {
+                                    doc.splice_text(&obj_id, *old_index, 0, &file_content[*new_index..new_index + new_len])?;
+                                },
+                                DiffOp::Replace{ old_index, old_len, new_index, new_len } => {
+                                    doc.splice_text(&obj_id, *old_index, *old_len as isize, &file_content[*new_index..new_index + new_len])?;
+                                },
                             }
                         }
                     }
                     None => todo!(),
                 }
+                if let Some(data) = doc.sync().generate_sync_message(&mut sync_state) {
+                    let _ = send_sync(&mut sender, sender_id.clone(), receiver_id.clone(), doc_id.to_string(), data).await;
+                };
             }
         }
     }
