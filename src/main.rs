@@ -35,6 +35,7 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let args = Cli::parse();
+    let sync_server_url = args.automerge_url;
 
     // start file watching the local file, default number of buffered events: 32
     let (tx, mut rx) = channel(32);
@@ -47,15 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     watcher.watch(&args.path.clone(), notify::RecursiveMode::Recursive)?;
 
-    let sync_server_url = args.automerge_url;
-
     let (mut sender, mut receiver) = open_ws_conn(&sync_server_url).await.unwrap();
 
     // generate random sender ID (our id)
     let sender_id = uuid::Uuid::new_v4().to_string();
-
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
 
     // Parse the document ID out of your doc_url
     let doc_id = parse_doc_id(&args.doc_url)?;
@@ -80,6 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
     })
