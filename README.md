@@ -1,3 +1,5 @@
+AI disclaimer: All of this code was handwritten by me, however I did use AI as a learning tool and to help with the project's direction.
+
 ## syncserver-daemon
 
 A Rust CLI daemon that connects to an [automerge-repo](https://github.com/automerge/automerge-repo) WebSocket sync server and keeps a local file in **two-way sync** with a remote Automerge document.
